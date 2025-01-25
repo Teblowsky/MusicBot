@@ -110,10 +110,10 @@ class YTDLSource(discord.PCMVolumeTransformer):
             print(f"Error downloading from URL: {e}")
             return None
 
-@bot.command(name="play", help="Adds a song or playlist to queue and plays it.")
+@bot.command(name="play", help="Dodaje utwór lub playlistę do kolejki i odtwarza.")
 async def play(ctx, *, url):
     if not ctx.author.voice:
-        await ctx.send("You must be in a voice channel to use this command.")
+        await ctx.send("Musisz być na kanale głosowym, aby użyć tej komendy.")
         return
 
     # Sprawdź limit czasu dla darmowych użytkowników
@@ -121,7 +121,7 @@ async def play(ctx, *, url):
         daily_time = get_user_daily_play_time(ctx.author.id)
         if daily_time >= FREE_DAILY_LIMIT:
             remaining_time = timedelta(seconds=FREE_DAILY_LIMIT - daily_time)
-            await ctx.send(f"You've reached your daily limit of 1 hour. Upgrade to premium for unlimited music! ✨\nTime remaining: {remaining_time}")
+            await ctx.send(f"Przekroczyłeś dzienny limit 1 godziny. Uaktualnij subskrypcję do premium dla nieograniczonego dostępu! ✨\nPozostały czas: {remaining_time}")
             return
 
     channel = ctx.author.voice.channel
@@ -131,7 +131,7 @@ async def play(ctx, *, url):
     async with ctx.typing():
         players = await YTDLSource.from_url(url, loop=bot.loop, stream=True, requester_id=ctx.author.id)
         if not players:
-            await ctx.send("Failed to load the track. Please check the URL and try again.")
+            await ctx.send("Nie udało się załadować utworu. Sprawdź URL i spróbuj ponownie.")
             return
 
         queue = get_queue(ctx.guild.id)
@@ -139,16 +139,16 @@ async def play(ctx, *, url):
         # Sprawdź limit kolejki
         max_queue = MAX_QUEUE_PREMIUM if is_premium(ctx.author.id) else MAX_QUEUE_FREE
         if len(queue) + len(players) > max_queue:
-            await ctx.send(f"Queue limit reached ({max_queue} tracks). {'Upgrade to premium for a larger queue! ✨' if not is_premium(ctx.author.id) else ''}")
+            await ctx.send(f"Limit kolejki osiągnięty ({max_queue} utworów). {'Uaktualnij do premium, aby mieć większy limit kolejki!' if not is_premium(ctx.author.id) else ''}")
             return
 
         for player in players:
             queue.append({"player": player, "title": player.title, "requester_id": ctx.author.id})
         
         if len(players) > 1:
-            await ctx.send(f"Added {len(players)} tracks to queue")
+            await ctx.send(f"Dodano {len(players)} utworów do kolejki")
         else:
-            await ctx.send(f"Added to queue: {players[0].title}")
+            await ctx.send(f"Dodano do kolejki: {players[0].title}")
 
     if not ctx.voice_client.is_playing():
         await play_next(ctx)
@@ -166,7 +166,7 @@ async def play_next(ctx):
         
         # Pokaż informacje o jakości dźwięku
         quality = "192kbps" if is_premium(track["requester_id"]) else "128kbps"
-        await ctx.send(f"Now playing: {track['title']} ({quality})")
+        await ctx.send(f"Teraz odtwarzane: {track['title']} ({quality})")
     else:
         now_playing[ctx.guild.id] = None
 
@@ -178,45 +178,36 @@ async def handle_song_end(ctx, track):
     
     await play_next(ctx)
 
-@bot.command(name="premium", help="Shows premium features and status")
+@bot.command(name="premium", help="Pokazuje status subskrypcji premium.")
 async def premium(ctx):
     is_user_premium = is_premium(ctx.author.id)
     daily_time = get_user_daily_play_time(ctx.author.id)
     
-    embed = discord.Embed(title="🌟 Premium Status", color=0x6200ea)
+    embed = discord.Embed(title="🌟 Status Premium", color=0x6200ea)
     embed.add_field(name="Status", value="Premium ✨" if is_user_premium else "Free", inline=False)
     
     if not is_user_premium:
         remaining_time = max(0, FREE_DAILY_LIMIT - daily_time)
-        embed.add_field(name="Daily Time Remaining", 
+        embed.add_field(name="Pozostały czas dzienny", 
                        value=str(timedelta(seconds=int(remaining_time))), 
                        inline=True)
     
-    embed.add_field(name="Queue Limit", 
-                   value=f"{MAX_QUEUE_PREMIUM if is_user_premium else MAX_QUEUE_FREE} tracks",
+    embed.add_field(name="Limit kolejki", 
+                   value=f"{MAX_QUEUE_PREMIUM if is_user_premium else MAX_QUEUE_FREE} utworów",
                    inline=True)
     
-    embed.add_field(name="Audio Quality", 
+    embed.add_field(name="Jakość audio", 
                    value="192kbps" if is_user_premium else "128kbps",
                    inline=True)
     
     if not is_user_premium:
-        embed.add_field(name="Get Premium", 
-                       value="Upgrade to premium for:\n" + 
-                             "• Unlimited listening time\n" +
-                             "• Higher audio quality (192kbps)\n" +
-                             "• Larger queue (50 tracks)\n" +
-                             "• Priority support",
+        embed.add_field(name="Zdobądź Premium", 
+                       value="Uaktualnij do premium, aby:\n" + 
+                             "• Nielimitowany czas słuchania\n" +
+                             "• Większa kolejka\n" +
+                             "• Wyższa jakość dźwięku\n", 
                        inline=False)
     
     await ctx.send(embed=embed)
 
-# Pozostałe komendy pozostają bez zmian...
-
-@bot.event
-async def on_ready():
-    print(f"Bot logged in as {bot.user}")
-    await bot.change_presence(activity=discord.Game(name="!play | !premium"))
-
-if __name__ == "__main__":
-    bot.run(TOKEN)
+bot.run(TOKEN)
