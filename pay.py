@@ -154,6 +154,10 @@ def redirect_to_patronite():
 def unauthorized(e):
     return redirect(url_for("login"))
 
+@app.route('/favicon.ico')
+def favicon():
+    return '', 204  # Odpowiada pustą odpowiedzią i kodem 204 (No Content)
+
 if __name__ == "__main__":
     create_tables()  # Tworzymy tabelę przy starcie aplikacji
     app.run(port=4242, debug=True)
