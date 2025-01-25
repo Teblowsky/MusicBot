@@ -11,7 +11,7 @@ app.config["DISCORD_CLIENT_ID"] = "your_discord_client_id"
 app.config["DISCORD_CLIENT_SECRET"] = "your_discord_client_secret"
 app.config["DISCORD_REDIRECT_URI"] = "your_redirect_uri"
 app.config["DISCORD_BOT_TOKEN"] = "your_discord_bot_token"
-ADMIN_ID = 1090349769450340443  # Bezpośrednia wartość ADMIN_ID
+ADMIN_ID = int(os.getenv("ADMIN_ID", 1090349769450340443))  # Bezpośrednia wartość ADMIN_ID
 
 discord = DiscordOAuth2Session(app)
 
