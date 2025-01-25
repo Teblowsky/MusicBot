@@ -15,6 +15,7 @@ app.config["DISCORD_CLIENT_ID"] = os.getenv("DISCORD_CLIENT_ID")
 app.config["DISCORD_CLIENT_SECRET"] = os.getenv("DISCORD_CLIENT_SECRET")
 app.config["DISCORD_REDIRECT_URI"] = os.getenv("DISCORD_REDIRECT_URI")
 app.config["DISCORD_BOT_TOKEN"] = os.getenv("DISCORD_BOT_TOKEN")
+ADMIN_ID = 123456789
 
 # Obsługa błędów przy pobieraniu ADMIN_ID
 admin_id = os.getenv("ADMIN_ID")
