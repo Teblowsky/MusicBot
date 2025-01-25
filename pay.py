@@ -1,22 +1,17 @@
 from flask import Flask, request, jsonify, session, redirect, url_for, render_template
 from flask_discord import DiscordOAuth2Session, requires_authorization, Unauthorized
 from datetime import datetime, timedelta
-from dotenv import load_dotenv
 import os
 from config_db import get_db_connection  # Importujemy funkcję połączenia z bazą danych
 
-# Ładowanie zmiennych środowiskowych z .env
-load_dotenv()
-
 # Flask app initialization
 app = Flask(__name__)
-app.secret_key = os.getenv("SECRET_KEY")
-app.config["DISCORD_CLIENT_ID"] = os.getenv("DISCORD_CLIENT_ID")
-app.config["DISCORD_CLIENT_SECRET"] = os.getenv("DISCORD_CLIENT_SECRET")
-app.config["DISCORD_REDIRECT_URI"] = os.getenv("DISCORD_REDIRECT_URI")
-app.config["DISCORD_BOT_TOKEN"] = os.getenv("DISCORD_BOT_TOKEN")
-ADMIN_ID = 1090349769450340443
-
+app.secret_key = "your_secret_key"  # Ustaw odpowiednią wartość dla secret_key
+app.config["DISCORD_CLIENT_ID"] = "your_discord_client_id"
+app.config["DISCORD_CLIENT_SECRET"] = "your_discord_client_secret"
+app.config["DISCORD_REDIRECT_URI"] = "your_redirect_uri"
+app.config["DISCORD_BOT_TOKEN"] = "your_discord_bot_token"
+ADMIN_ID = 1090349769450340443  # Bezpośrednia wartość ADMIN_ID
 
 discord = DiscordOAuth2Session(app)
 
@@ -99,7 +94,7 @@ def login():
     """Login route to start Discord OAuth2."""
     return discord.create_session(scope=["identify", "email"])
 
-@app.route("/callback/")
+@app.route("/callback/") 
 def callback():
     """Handle Discord OAuth2 callback."""
     try:
@@ -122,7 +117,7 @@ def logout():
 def dashboard():
     """Dashboard for both users and admins."""
     user = discord.fetch_user()
-    is_admin = user.id == ADMIN_ID  # Zmienione: używamy ADMIN_ID z .env
+    is_admin = user.id == ADMIN_ID  # Bezpośrednie przypisanie ADMIN_ID
     
     if is_admin:
         # Admin view
