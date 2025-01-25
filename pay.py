@@ -89,6 +89,10 @@ def add_subscription(user_id, days=30, subscription_type="monthly", last_payment
     conn.close()
 
 # Routes
+@app.route("/")
+def index():
+    return render_template("index.html")  # Zmienna, zależna od tego, co chcesz wyświetlić na głównej stronie
+
 @app.route("/login/")
 def login():
     """Login route to start Discord OAuth2."""
