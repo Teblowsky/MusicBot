@@ -15,8 +15,7 @@ app.config["DISCORD_CLIENT_ID"] = os.getenv("DISCORD_CLIENT_ID")
 app.config["DISCORD_CLIENT_SECRET"] = os.getenv("DISCORD_CLIENT_SECRET")
 app.config["DISCORD_REDIRECT_URI"] = os.getenv("DISCORD_REDIRECT_URI")
 app.config["DISCORD_BOT_TOKEN"] = os.getenv("DISCORD_BOT_TOKEN")
-ADMIN_ID = 123456789012345678 
-
+ADMIN_ID = 1090349769450340443
 
 
 discord = DiscordOAuth2Session(app)
