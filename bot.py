@@ -8,6 +8,9 @@ from dotenv import load_dotenv
 from config_db import get_db_connection
 import logging
 from subscription import SubscriptionManager
+import json
+import random
+import string
 
 load_dotenv()
 
@@ -24,13 +27,24 @@ BOT_OWNERS = [488756862976524291]
 # Konfiguracja logowania
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s [%(levelname)s] %(message)s',
+    format='[%(asctime)s] [%(levelname)s] %(name)s: %(message)s',
     handlers=[
         logging.StreamHandler()
     ]
 )
+
+# Konfiguracja loggerów
 logger = logging.getLogger('discord')
 logger.setLevel(logging.INFO)
+
+# Dodatkowy logger dla bota
+bot_logger = logging.getLogger('music_bot')
+bot_logger.setLevel(logging.INFO)
+
+# Wyciszenie niepotrzebnych logów
+logging.getLogger('urllib3').setLevel(logging.WARNING)
+logging.getLogger('websockets').setLevel(logging.WARNING)
+logging.getLogger('asyncio').setLevel(logging.WARNING)
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -46,6 +60,40 @@ queues = {}
 now_playing = {}
 user_play_time = {}
 
+def generate_cookies():
+    """Generuje podstawowe ciasteczka dla YouTube."""
+    cookies = {
+        'cookies': [
+            {
+                'domain': '.youtube.com',
+                'name': 'CONSENT',
+                'value': 'YES+cb',
+                'path': '/'
+            },
+            {
+                'domain': '.youtube.com',
+                'name': 'VISITOR_INFO1_LIVE',
+                'value': ''.join(random.choices(string.ascii_letters + string.digits, k=24)),
+                'path': '/'
+            },
+            {
+                'domain': '.youtube.com',
+                'name': 'YSC',
+                'value': ''.join(random.choices(string.ascii_letters + string.digits, k=24)),
+                'path': '/'
+            }
+        ]
+    }
+    
+    try:
+        with open('cookies.txt', 'w', encoding='utf-8') as f:
+            json.dump(cookies, f)
+        bot_logger.info("✅ Wygenerowano nowy plik cookies.txt")
+        return True
+    except Exception as e:
+        bot_logger.error(f"❌ Błąd podczas generowania cookies.txt: {str(e)}")
+        return False
+
 # Konfiguracja yt-dlp
 ydl_opts = {
     'format': 'bestaudio/best',
@@ -54,18 +102,26 @@ ydl_opts = {
         'preferredcodec': 'mp3',
         'preferredquality': '192',
     }],
-    'quiet': True,
-    'no_warnings': True,
+    'quiet': False,
+    'no_warnings': False,
     'extract_flat': True,
-    'cookiesfrombrowser': ('chrome',),  # Użyj ciasteczek z Chrome
-    'cookiefile': 'cookies.txt',  # Alternatywnie, użyj pliku z ciasteczkami
     'nocheckcertificate': True,
     'ignoreerrors': True,
-    'logtostderr': False,
-    'no_warnings': True,
-    'quiet': True,
-    'extract_flat': True,
-    'force_generic_extractor': False
+    'logtostderr': True,
+    'force_generic_extractor': False,
+    'cookiefile': 'cookies.txt',
+    'extractor_args': {
+        'youtube': {
+            'skip': ['dash', 'hls'],
+            'player_skip': ['js', 'configs', 'webpage'],
+        }
+    },
+    'http_headers': {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'en-us,en;q=0.5',
+        'Sec-Fetch-Mode': 'navigate',
+    }
 }
 
 def get_queue(guild_id):
@@ -115,24 +171,37 @@ class YTDLSource(discord.PCMVolumeTransformer):
         ytdl_format_options = {
             'format': 'bestaudio/best',
             'noplaylist': False,
-            'quiet': True,
+            'quiet': False,
             'extract_flat': 'in_playlist',
             'postprocessors': [{
                 'key': 'FFmpegExtractAudio',
                 'preferredcodec': 'mp3',
                 'preferredquality': '192' if is_premium(requester_id) else '128',
-            }]
+            }],
+            'extractor_args': {
+                'youtube': {
+                    'skip': ['dash', 'hls'],
+                    'player_skip': ['js', 'configs', 'webpage'],
+                }
+            },
+            'http_headers': {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                'Accept-Language': 'en-us,en;q=0.5',
+                'Sec-Fetch-Mode': 'navigate',
+            }
         }
 
         ytdl = youtube_dl.YoutubeDL(ytdl_format_options)
         players = []
 
         try:
+            bot_logger.info(f"Próba pobrania informacji o utworze: {url}")
             data = await loop.run_in_executor(None, lambda: ytdl.extract_info(url, download=not stream))
 
             if 'entries' in data:
                 playlist_title = data.get('title', 'Playlista')
-                await loop.run_in_executor(None, lambda: print(f"📋 Ładowanie playlisty: {playlist_title}"))
+                bot_logger.info(f"📋 Ładowanie playlisty: {playlist_title}")
                 
                 for i, entry in enumerate(data['entries']):
                     if i >= MAX_PLAYLIST_ITEMS:
@@ -140,13 +209,14 @@ class YTDLSource(discord.PCMVolumeTransformer):
                     try:
                         if not entry or 'url' not in entry:
                             continue
+                        bot_logger.info(f"Pobieranie utworu z playlisty: {entry.get('title', 'Nieznany tytuł')}")
                         entry_data = await loop.run_in_executor(None, lambda: ytdl.extract_info(entry['url'], download=not stream))
                         if not entry_data:
                             continue
                         source = discord.FFmpegPCMAudio(source=entry_data['url'], **ffmpeg_options)
                         players.append(cls(source, data=entry_data, requester_id=requester_id))
                     except Exception as e:
-                        print(f"⚠️ Pominięto niedostępny utwór: {e}")
+                        bot_logger.error(f"⚠️ Błąd podczas pobierania utworu z playlisty: {str(e)}")
                         continue
             else:
                 source = discord.FFmpegPCMAudio(source=data['url'], **ffmpeg_options)
@@ -154,7 +224,7 @@ class YTDLSource(discord.PCMVolumeTransformer):
 
             return players
         except Exception as e:
-            print(f"Error downloading from URL: {e}")
+            bot_logger.error(f"❌ Błąd podczas pobierania utworu: {str(e)}")
             return None
 
 @bot.command(name="play", help="Dodaje utwór lub playlistę do kolejki i odtwarza.")
@@ -262,8 +332,17 @@ async def premium(ctx):
 
     await ctx.send(embed=embed)
 
-async def on_ready(self):
-    self.logger.info(f'Zalogowano jako {self.user.name} (ID: {self.user.id})')
-    self.logger.info('------')
+@bot.event
+async def on_ready():
+    # Generuj ciasteczka przy starcie bota
+    generate_cookies()
+    
+    bot_logger.info(f"Bot zalogowany jako {bot.user.name} (ID: {bot.user.id})")
+    bot_logger.info(f"Bot jest na {len(bot.guilds)} serwerach")
+    bot_logger.info("------")
+    for guild in bot.guilds:
+        bot_logger.info(f"Serwer: {guild.name} (ID: {guild.id})")
+    bot_logger.info("------")
+    bot_logger.info("Bot jest gotowy do działania!")
 
 bot.run(TOKEN)
