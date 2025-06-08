@@ -19,4 +19,8 @@ nosetests.xml
 coverage.xml
 *.cover
 *.log
-.pytest_cache/ 
+.pytest_cache/
+.vscode/
+.idea/
+*.swp
+*.swo 

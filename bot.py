@@ -6,6 +6,8 @@ import os
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
 from config_db import get_db_connection
+import logging
+from subscription import SubscriptionManager
 
 load_dotenv()
 
@@ -19,8 +21,20 @@ MAX_PLAYLIST_ITEMS = 20
 # 🔓 Lista właścicieli z wiecznym premium
 BOT_OWNERS = [488756862976524291]
 
+# Konfiguracja logowania
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s [%(levelname)s] %(message)s',
+    handlers=[
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger('discord')
+logger.setLevel(logging.INFO)
+
 intents = discord.Intents.default()
 intents.message_content = True
+intents.voice_states = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
@@ -225,5 +239,9 @@ async def premium(ctx):
                         inline=False)
 
     await ctx.send(embed=embed)
+
+async def on_ready(self):
+    self.logger.info(f'Zalogowano jako {self.user.name} (ID: {self.user.id})')
+    self.logger.info('------')
 
 bot.run(TOKEN)
