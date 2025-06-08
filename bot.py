@@ -116,22 +116,29 @@ class YTDLSource(discord.PCMVolumeTransformer):
                 playlist = Playlist(url)
                 for video_url in playlist.video_urls[:MAX_PLAYLIST_ITEMS]:
                     yt = YouTube(video_url)
-                    data = {
-                        'title': yt.title,
-                        'url': video_url,
-                        'duration': yt.length,
-                        'webpage_url': video_url
-                    }
-                    players.append(data)
+                    stream = yt.streams.filter(only_audio=True).first()
+                    if stream:
+                        data = {
+                            'title': yt.title,
+                            'url': stream.url,
+                            'duration': yt.length,
+                            'webpage_url': video_url
+                        }
+                        players.append(data)
             else:
                 yt = YouTube(url)
-                data = {
-                    'title': yt.title,
-                    'url': url,
-                    'duration': yt.length,
-                    'webpage_url': url
-                }
-                players.append(data)
+                stream = yt.streams.filter(only_audio=True).first()
+                if stream:
+                    data = {
+                        'title': yt.title,
+                        'url': stream.url,
+                        'duration': yt.length,
+                        'webpage_url': url
+                    }
+                    players.append(data)
+
+            if not players:
+                raise Exception("Nie znaleziono strumienia audio")
 
             return [cls(discord.FFmpegPCMAudio(player['url'], **ffmpeg_options), data=player, requester_id=requester_id) for player in players]
 
@@ -172,39 +179,42 @@ def get_user_daily_play_time(user_id):
 @bot.command(name="play", help="Dodaje utwór lub playlistę do kolejki i odtwarza.")
 async def play(ctx, *, url):
     if not ctx.author.voice:
-        await ctx.send("❌ Musisz być na kanale głosowym.")
+        await ctx.send("❌ Musisz być na kanale głosowym!")
         return
 
-    if not is_premium(ctx.author.id):
-        daily_time = get_user_daily_play_time(ctx.author.id)
-        if daily_time >= FREE_DAILY_LIMIT:
-            await ctx.send("⛔ Przekroczyłeś limit 1h dziennie.\nUaktualnij do premium ✨")
+    voice_channel = ctx.author.voice.channel
+    if not ctx.voice_client:
+        try:
+            await voice_channel.connect()
+        except Exception as e:
+            bot_logger.error(f"❌ Błąd podczas łączenia z kanałem głosowym: {str(e)}")
+            await ctx.send("❌ Nie mogę połączyć się z kanałem głosowym!")
             return
 
-    channel = ctx.author.voice.channel
-    if ctx.voice_client is None:
-        await channel.connect()
+    try:
+        async with ctx.typing():
+            players = await YTDLSource.from_url(url, loop=bot.loop, requester_id=ctx.author.id)
+            
+            if not players:
+                await ctx.send("❌ Nie udało się pobrać utworu!")
+                return
 
-    async with ctx.typing():
-        players = await YTDLSource.from_url(url, loop=bot.loop, stream=True, requester_id=ctx.author.id)
-        if not players:
-            await ctx.send("⚠️ Nie udało się załadować utworu. Sprawdź link.")
-            return
+            queue = get_queue(ctx.guild.id)
+            
+            for player in players:
+                if len(queue) >= (MAX_QUEUE_PREMIUM if is_premium(ctx.author.id) else MAX_QUEUE_FREE):
+                    await ctx.send(f"❌ Kolejka jest pełna! (max {MAX_QUEUE_PREMIUM if is_premium(ctx.author.id) else MAX_QUEUE_FREE} utworów)")
+                    return
+                
+                queue.append(player)
+                await ctx.send(f"✅ Dodano do kolejki: **{player.title}**")
 
-        queue = get_queue(ctx.guild.id)
-        max_queue = MAX_QUEUE_PREMIUM if is_premium(ctx.author.id) else MAX_QUEUE_FREE
+            if not ctx.voice_client.is_playing():
+                await play_next(ctx)
 
-        if len(queue) + len(players) > max_queue:
-            await ctx.send(f"⛔ Limit kolejki osiągnięty ({max_queue} utworów).")
-            return
-
-        for player in players:
-            queue.append({"player": player, "title": player.title, "requester_id": ctx.author.id})
-
-        await ctx.send(f"✅ Dodano {len(players)} utwór(ów) do kolejki.")
-
-    if not ctx.voice_client.is_playing():
-        await play_next(ctx)
+    except Exception as e:
+        bot_logger.error(f"❌ Błąd podczas odtwarzania: {str(e)}")
+        await ctx.send(f"❌ Wystąpił błąd: {str(e)}")
 
 async def play_next(ctx):
     queue = get_queue(ctx.guild.id)
