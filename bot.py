@@ -46,6 +46,28 @@ queues = {}
 now_playing = {}
 user_play_time = {}
 
+# Konfiguracja yt-dlp
+ydl_opts = {
+    'format': 'bestaudio/best',
+    'postprocessors': [{
+        'key': 'FFmpegExtractAudio',
+        'preferredcodec': 'mp3',
+        'preferredquality': '192',
+    }],
+    'quiet': True,
+    'no_warnings': True,
+    'extract_flat': True,
+    'cookiesfrombrowser': ('chrome',),  # Użyj ciasteczek z Chrome
+    'cookiefile': 'cookies.txt',  # Alternatywnie, użyj pliku z ciasteczkami
+    'nocheckcertificate': True,
+    'ignoreerrors': True,
+    'logtostderr': False,
+    'no_warnings': True,
+    'quiet': True,
+    'extract_flat': True,
+    'force_generic_extractor': False
+}
+
 def get_queue(guild_id):
     if guild_id not in queues:
         queues[guild_id] = []
