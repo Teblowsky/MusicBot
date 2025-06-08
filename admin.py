@@ -13,6 +13,10 @@ app.config["DISCORD_CLIENT_ID"] = os.getenv('DISCORD_CLIENT_ID')
 app.config["DISCORD_CLIENT_SECRET"] = os.getenv('DISCORD_CLIENT_SECRET')
 app.config["DISCORD_REDIRECT_URI"] = os.getenv('DISCORD_REDIRECT_URI')
 
+# Konfiguracja dla Railway
+if os.getenv('RAILWAY_ENVIRONMENT'):
+    app.config["DISCORD_REDIRECT_URI"] = f"https://{os.getenv('RAILWAY_PUBLIC_DOMAIN')}/callback"
+
 discord = DiscordOAuth2Session(app)
 subscription_manager = SubscriptionManager()
 
