@@ -1,6 +1,6 @@
 import discord
 from discord.ext import commands
-import yt_dlp as youtube_dl
+from pytube import YouTube, Playlist
 import asyncio
 import os
 from datetime import datetime, timedelta
@@ -94,35 +94,50 @@ def generate_cookies():
         bot_logger.error(f"❌ Błąd podczas generowania cookies.txt: {str(e)}")
         return False
 
-# Konfiguracja yt-dlp
-ydl_opts = {
-    'format': 'bestaudio/best',
-    'postprocessors': [{
-        'key': 'FFmpegExtractAudio',
-        'preferredcodec': 'mp3',
-        'preferredquality': '192',
-    }],
-    'quiet': False,
-    'no_warnings': False,
-    'extract_flat': True,
-    'nocheckcertificate': True,
-    'ignoreerrors': True,
-    'logtostderr': True,
-    'force_generic_extractor': False,
-    'cookiefile': 'cookies.txt',
-    'extractor_args': {
-        'youtube': {
-            'skip': ['dash', 'hls'],
-            'player_skip': ['js', 'configs', 'webpage'],
-        }
-    },
-    'http_headers': {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-        'Accept-Language': 'en-us,en;q=0.5',
-        'Sec-Fetch-Mode': 'navigate',
-    }
-}
+class YTDLSource(discord.PCMVolumeTransformer):
+    def __init__(self, source, *, data, volume=0.5, requester_id=None):
+        super().__init__(source, volume)
+        self.data = data
+        self.title = data.get('title')
+        self.url = data.get('url')
+        self.duration = data.get('duration')
+        self.requester_id = requester_id
+        self.start_time = None
+
+    @classmethod
+    async def from_url(cls, url, *, loop=None, stream=False, requester_id=None):
+        loop = loop or asyncio.get_event_loop()
+        players = []
+
+        try:
+            bot_logger.info(f"Próba pobrania informacji o utworze: {url}")
+            
+            if 'playlist' in url:
+                playlist = Playlist(url)
+                for video_url in playlist.video_urls[:MAX_PLAYLIST_ITEMS]:
+                    yt = YouTube(video_url)
+                    data = {
+                        'title': yt.title,
+                        'url': video_url,
+                        'duration': yt.length,
+                        'webpage_url': video_url
+                    }
+                    players.append(data)
+            else:
+                yt = YouTube(url)
+                data = {
+                    'title': yt.title,
+                    'url': url,
+                    'duration': yt.length,
+                    'webpage_url': url
+                }
+                players.append(data)
+
+            return [cls(discord.FFmpegPCMAudio(player['url'], **ffmpeg_options), data=player, requester_id=requester_id) for player in players]
+
+        except Exception as e:
+            bot_logger.error(f"❌ Błąd podczas pobierania utworu: {str(e)}")
+            return None
 
 def get_queue(guild_id):
     if guild_id not in queues:
@@ -153,79 +168,6 @@ def get_user_daily_play_time(user_id):
     if datetime.now().date() > user_play_time[user_id]["last_reset"].date():
         user_play_time[user_id] = {"total": 0, "last_reset": datetime.now()}
     return user_play_time[user_id]["total"]
-
-class YTDLSource(discord.PCMVolumeTransformer):
-    def __init__(self, source, *, data, volume=0.5, requester_id=None):
-        super().__init__(source, volume)
-        self.data = data
-        self.title = data.get('title')
-        self.url = data.get('url')
-        self.duration = data.get('duration')
-        self.requester_id = requester_id
-        self.start_time = None
-
-    @classmethod
-    async def from_url(cls, url, *, loop=None, stream=False, requester_id=None):
-        loop = loop or asyncio.get_event_loop()
-
-        ytdl_format_options = {
-            'format': 'bestaudio/best',
-            'noplaylist': False,
-            'quiet': False,
-            'extract_flat': 'in_playlist',
-            'postprocessors': [{
-                'key': 'FFmpegExtractAudio',
-                'preferredcodec': 'mp3',
-                'preferredquality': '192' if is_premium(requester_id) else '128',
-            }],
-            'extractor_args': {
-                'youtube': {
-                    'skip': ['dash', 'hls'],
-                    'player_skip': ['js', 'configs', 'webpage'],
-                }
-            },
-            'http_headers': {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-                'Accept-Language': 'en-us,en;q=0.5',
-                'Sec-Fetch-Mode': 'navigate',
-            }
-        }
-
-        ytdl = youtube_dl.YoutubeDL(ytdl_format_options)
-        players = []
-
-        try:
-            bot_logger.info(f"Próba pobrania informacji o utworze: {url}")
-            data = await loop.run_in_executor(None, lambda: ytdl.extract_info(url, download=not stream))
-
-            if 'entries' in data:
-                playlist_title = data.get('title', 'Playlista')
-                bot_logger.info(f"📋 Ładowanie playlisty: {playlist_title}")
-                
-                for i, entry in enumerate(data['entries']):
-                    if i >= MAX_PLAYLIST_ITEMS:
-                        break
-                    try:
-                        if not entry or 'url' not in entry:
-                            continue
-                        bot_logger.info(f"Pobieranie utworu z playlisty: {entry.get('title', 'Nieznany tytuł')}")
-                        entry_data = await loop.run_in_executor(None, lambda: ytdl.extract_info(entry['url'], download=not stream))
-                        if not entry_data:
-                            continue
-                        source = discord.FFmpegPCMAudio(source=entry_data['url'], **ffmpeg_options)
-                        players.append(cls(source, data=entry_data, requester_id=requester_id))
-                    except Exception as e:
-                        bot_logger.error(f"⚠️ Błąd podczas pobierania utworu z playlisty: {str(e)}")
-                        continue
-            else:
-                source = discord.FFmpegPCMAudio(source=data['url'], **ffmpeg_options)
-                players.append(cls(source, data=data, requester_id=requester_id))
-
-            return players
-        except Exception as e:
-            bot_logger.error(f"❌ Błąd podczas pobierania utworu: {str(e)}")
-            return None
 
 @bot.command(name="play", help="Dodaje utwór lub playlistę do kolejki i odtwarza.")
 async def play(ctx, *, url):
