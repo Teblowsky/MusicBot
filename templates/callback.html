@@ -31,9 +31,9 @@
         }
     </style>
     <script>
-        // Automatyczne przekierowanie do dashboardu po zakończeniu autoryzacji
+        // Automatyczne przekierowanie do dashboard.html po zakończeniu autoryzacji
         setTimeout(function() {
-            window.location.href = "{{ url_for('dashboard') }}";  // Przekierowanie do dashboardu
+            window.location.href = "/dashboard.html";  // Przekierowanie na dashboard.html
         }, 2000);  // 2 sekundy oczekiwania przed przekierowaniem
     </script>
 </head>

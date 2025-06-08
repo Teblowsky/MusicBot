@@ -3,3 +3,6 @@ Flask-Discord
 stripe
 python-dotenv
 psycopg2-binary
+discord.py
+yt-dlp
+PyNaCl

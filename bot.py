@@ -10,39 +10,27 @@ from config_db import get_db_connection
 load_dotenv()
 
 TOKEN = os.getenv("DISCORD_BOT_TOKEN")
-FFMPEG_PATH = os.getenv("FFMPEG_PATH")
 
-# Limity dla użytkowników
-FREE_DAILY_LIMIT = 3600  # 1 godzina w sekundach
-MAX_QUEUE_FREE = 5  # Maksymalna długość kolejki dla darmowych użytkowników
-MAX_QUEUE_PREMIUM = 50  # Maksymalna długość kolejki dla premium
+FREE_DAILY_LIMIT = 3600
+MAX_QUEUE_FREE = 5
+MAX_QUEUE_PREMIUM = 50
+MAX_PLAYLIST_ITEMS = 20
+
+# 🔓 Lista właścicieli z wiecznym premium
+BOT_OWNERS = [488756862976524291]
 
 intents = discord.Intents.default()
 intents.message_content = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-ytdl_format_options = {
-    'format': 'bestaudio/best',
-    'postprocessors': [{
-        'key': 'FFmpegExtractAudio',
-        'preferredcodec': 'mp3',
-        'preferredquality': '192',  # Premium users get 192kbps, free users get 128kbps
-    }],
-    'quiet': True,
-    'extractaudio': True,
-    'noplaylist': False,
-}
-
 ffmpeg_options = {
     'options': '-vn',
 }
 
-ytdl = youtube_dl.YoutubeDL(ytdl_format_options)
-
 queues = {}
 now_playing = {}
-user_play_time = {}  # Śledzi czas odtwarzania dla każdego użytkownika
+user_play_time = {}
 
 def get_queue(guild_id):
     if guild_id not in queues:
@@ -50,6 +38,9 @@ def get_queue(guild_id):
     return queues[guild_id]
 
 def is_premium(user_id):
+    if user_id in BOT_OWNERS:
+        return True  # 🔐 Właściciel zawsze premium
+
     conn = get_db_connection()
     if conn is None:
         return False
@@ -62,17 +53,13 @@ def is_premium(user_id):
             return expires_at > datetime.now()
         return False
     finally:
-        if conn:
-            conn.close()
+        conn.close()
 
 def get_user_daily_play_time(user_id):
     if user_id not in user_play_time:
         user_play_time[user_id] = {"total": 0, "last_reset": datetime.now()}
-    
-    # Reset daily limit at midnight
     if datetime.now().date() > user_play_time[user_id]["last_reset"].date():
         user_play_time[user_id] = {"total": 0, "last_reset": datetime.now()}
-    
     return user_play_time[user_id]["total"]
 
 class YTDLSource(discord.PCMVolumeTransformer):
@@ -88,24 +75,42 @@ class YTDLSource(discord.PCMVolumeTransformer):
     @classmethod
     async def from_url(cls, url, *, loop=None, stream=False, requester_id=None):
         loop = loop or asyncio.get_event_loop()
-        try:
-            # Ustaw jakość dźwięku w zależności od statusu premium
-            if is_premium(requester_id):
-                ytdl_format_options['postprocessors'][0]['preferredquality'] = '192'
-            else:
-                ytdl_format_options['postprocessors'][0]['preferredquality'] = '128'
 
+        ytdl_format_options = {
+            'format': 'bestaudio/best',
+            'noplaylist': False,
+            'quiet': True,
+            'extract_flat': False,
+            'postprocessors': [{
+                'key': 'FFmpegExtractAudio',
+                'preferredcodec': 'mp3',
+                'preferredquality': '192' if is_premium(requester_id) else '128',
+            }]
+        }
+
+        ytdl = youtube_dl.YoutubeDL(ytdl_format_options)
+        players = []
+
+        try:
             data = await loop.run_in_executor(None, lambda: ytdl.extract_info(url, download=not stream))
-            
+
             if 'entries' in data:
-                # Playlist
-                return [cls(discord.FFmpegPCMAudio(executable=FFMPEG_PATH, source=entry['url'], **ffmpeg_options), 
-                          data=entry, requester_id=requester_id)
-                        for entry in data['entries']]
-            
-            # Single video
-            return [cls(discord.FFmpegPCMAudio(executable=FFMPEG_PATH, source=data['url'], **ffmpeg_options), 
-                       data=data, requester_id=requester_id)]
+                for i, entry in enumerate(data['entries']):
+                    if i >= MAX_PLAYLIST_ITEMS:
+                        break
+                    try:
+                        if not entry or 'url' not in entry:
+                            continue
+                        source = discord.FFmpegPCMAudio(source=entry['url'], **ffmpeg_options)
+                        players.append(cls(source, data=entry, requester_id=requester_id))
+                    except Exception as e:
+                        print(f"⚠️ Pominięto niedostępny utwór: {e}")
+                        continue
+            else:
+                source = discord.FFmpegPCMAudio(source=data['url'], **ffmpeg_options)
+                players.append(cls(source, data=data, requester_id=requester_id))
+
+            return players
         except Exception as e:
             print(f"Error downloading from URL: {e}")
             return None
@@ -113,15 +118,13 @@ class YTDLSource(discord.PCMVolumeTransformer):
 @bot.command(name="play", help="Dodaje utwór lub playlistę do kolejki i odtwarza.")
 async def play(ctx, *, url):
     if not ctx.author.voice:
-        await ctx.send("Musisz być na kanale głosowym, aby użyć tej komendy.")
+        await ctx.send("❌ Musisz być na kanale głosowym.")
         return
 
-    # Sprawdź limit czasu dla darmowych użytkowników
     if not is_premium(ctx.author.id):
         daily_time = get_user_daily_play_time(ctx.author.id)
         if daily_time >= FREE_DAILY_LIMIT:
-            remaining_time = timedelta(seconds=FREE_DAILY_LIMIT - daily_time)
-            await ctx.send(f"Przekroczyłeś dzienny limit 1 godziny. Uaktualnij subskrypcję do premium dla nieograniczonego dostępu! ✨\nPozostały czas: {remaining_time}")
+            await ctx.send("⛔ Przekroczyłeś limit 1h dziennie.\nUaktualnij do premium ✨")
             return
 
     channel = ctx.author.voice.channel
@@ -131,24 +134,20 @@ async def play(ctx, *, url):
     async with ctx.typing():
         players = await YTDLSource.from_url(url, loop=bot.loop, stream=True, requester_id=ctx.author.id)
         if not players:
-            await ctx.send("Nie udało się załadować utworu. Sprawdź URL i spróbuj ponownie.")
+            await ctx.send("⚠️ Nie udało się załadować utworu. Sprawdź link.")
             return
 
         queue = get_queue(ctx.guild.id)
-        
-        # Sprawdź limit kolejki
         max_queue = MAX_QUEUE_PREMIUM if is_premium(ctx.author.id) else MAX_QUEUE_FREE
+
         if len(queue) + len(players) > max_queue:
-            await ctx.send(f"Limit kolejki osiągnięty ({max_queue} utworów). {'Uaktualnij do premium, aby mieć większy limit kolejki!' if not is_premium(ctx.author.id) else ''}")
+            await ctx.send(f"⛔ Limit kolejki osiągnięty ({max_queue} utworów).")
             return
 
         for player in players:
             queue.append({"player": player, "title": player.title, "requester_id": ctx.author.id})
-        
-        if len(players) > 1:
-            await ctx.send(f"Dodano {len(players)} utworów do kolejki")
-        else:
-            await ctx.send(f"Dodano do kolejki: {players[0].title}")
+
+        await ctx.send(f"✅ Dodano {len(players)} utwór(ów) do kolejki.")
 
     if not ctx.voice_client.is_playing():
         await play_next(ctx)
@@ -158,56 +157,67 @@ async def play_next(ctx):
     if queue:
         track = queue.pop(0)
         now_playing[ctx.guild.id] = track["title"]
-        
-        # Rozpocznij śledzenie czasu
         track["player"].start_time = datetime.now()
-        
         ctx.voice_client.play(track["player"], after=lambda e: bot.loop.create_task(handle_song_end(ctx, track)))
-        
-        # Pokaż informacje o jakości dźwięku
         quality = "192kbps" if is_premium(track["requester_id"]) else "128kbps"
-        await ctx.send(f"Teraz odtwarzane: {track['title']} ({quality})")
+        await ctx.send(f"▶️ Teraz odtwarzane: {track['title']} ({quality})")
     else:
         now_playing[ctx.guild.id] = None
 
 async def handle_song_end(ctx, track):
     if not is_premium(track["requester_id"]):
-        # Aktualizuj czas odtwarzania dla darmowych użytkowników
         elapsed_time = (datetime.now() - track["player"].start_time).total_seconds()
         user_play_time[track["requester_id"]]["total"] += elapsed_time
-    
     await play_next(ctx)
 
-@bot.command(name="premium", help="Pokazuje status subskrypcji premium.")
+@bot.command(name="skip", help="⏭️ Pomija aktualnie odtwarzany utwór.")
+async def skip(ctx):
+    if not ctx.voice_client or not ctx.voice_client.is_connected():
+        await ctx.send("❌ Bot nie jest połączony z kanałem.")
+        return
+    if not ctx.voice_client.is_playing():
+        await ctx.send("⚠️ Nie ma utworu do pominięcia.")
+        return
+    ctx.voice_client.stop()
+    await ctx.send("⏭️ Utwór pominięty.")
+
+@bot.command(name="stop", help="🛑 Zatrzymuje muzykę i czyści kolejkę.")
+async def stop(ctx):
+    if not ctx.voice_client or not ctx.voice_client.is_connected():
+        await ctx.send("❌ Bot nie jest połączony.")
+        return
+    queues[ctx.guild.id] = []
+    now_playing[ctx.guild.id] = None
+    ctx.voice_client.stop()
+    await ctx.voice_client.disconnect()
+    await ctx.send("🛑 Muzyka zatrzymana, kolejka wyczyszczona, bot rozłączony.")
+
+@bot.command(name="premium", help="📊 Pokaż status premium.")
 async def premium(ctx):
     is_user_premium = is_premium(ctx.author.id)
     daily_time = get_user_daily_play_time(ctx.author.id)
-    
     embed = discord.Embed(title="🌟 Status Premium", color=0x6200ea)
     embed.add_field(name="Status", value="Premium ✨" if is_user_premium else "Free", inline=False)
-    
+
     if not is_user_premium:
         remaining_time = max(0, FREE_DAILY_LIMIT - daily_time)
-        embed.add_field(name="Pozostały czas dzienny", 
-                       value=str(timedelta(seconds=int(remaining_time))), 
-                       inline=True)
-    
-    embed.add_field(name="Limit kolejki", 
-                   value=f"{MAX_QUEUE_PREMIUM if is_user_premium else MAX_QUEUE_FREE} utworów",
-                   inline=True)
-    
-    embed.add_field(name="Jakość audio", 
-                   value="192kbps" if is_user_premium else "128kbps",
-                   inline=True)
-    
+        embed.add_field(name="Pozostały czas dzienny",
+                        value=str(timedelta(seconds=int(remaining_time))),
+                        inline=True)
+
+    embed.add_field(name="Limit kolejki",
+                    value=f"{MAX_QUEUE_PREMIUM if is_user_premium else MAX_QUEUE_FREE} utworów",
+                    inline=True)
+
+    embed.add_field(name="Jakość audio",
+                    value="192kbps" if is_user_premium else "128kbps",
+                    inline=True)
+
     if not is_user_premium:
-        embed.add_field(name="Zdobądź Premium", 
-                       value="Uaktualnij do premium, aby:\n" + 
-                             "• Nielimitowany czas słuchania\n" +
-                             "• Większa kolejka\n" +
-                             "• Wyższa jakość dźwięku\n", 
-                       inline=False)
-    
+        embed.add_field(name="Zdobądź Premium",
+                        value="• Nielimitowany czas\n• Większa kolejka\n• Lepsza jakość",
+                        inline=False)
+
     await ctx.send(embed=embed)
 
 bot.run(TOKEN)

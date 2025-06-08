@@ -4,6 +4,9 @@ from datetime import datetime, timedelta
 import os
 from dotenv import load_dotenv  # Importujemy bibliotekę dotenv
 from config_db import get_db_connection  # Importujemy funkcję połączenia z bazą danych
+from urllib.parse import quote
+
+os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'
 
 # Załaduj zmienne środowiskowe z pliku .env
 load_dotenv()
@@ -16,6 +19,20 @@ app.config["DISCORD_CLIENT_SECRET"] = os.getenv("DISCORD_CLIENT_SECRET")  # Pobi
 app.config["DISCORD_REDIRECT_URI"] = os.getenv("DISCORD_REDIRECT_URI")  # Pobierz REDIRECT_URI
 app.config["DISCORD_BOT_TOKEN"] = os.getenv("DISCORD_BOT_TOKEN")  # Pobierz BOT_TOKEN
 ADMIN_ID = int(os.getenv("ADMIN_ID", 1090349769450340443))  # Pobierz ADMIN_ID lub użyj wartości domyślnej
+
+print("Registered Routes:")
+for rule in app.url_map.iter_rules():
+    print(f"{rule.endpoint} -> {rule}")
+    
+from config_db import get_db_connection
+
+conn = get_db_connection()
+if conn:
+    print("Połączenie z bazą danych działa!")
+    conn.close()
+else:
+    print("Błąd połączenia z bazą danych!")
+
 
 discord = DiscordOAuth2Session(app)
 
@@ -100,17 +117,21 @@ def index():
 @app.route("/login/")
 def login():
     """Login route to start Discord OAuth2."""
-    return discord.create_session(scope=["identify", "email"])
+    redirect_uri = quote("http://localhost:3000/callback")  # Korzystamy z wartości z pliku .env
+    return redirect(f"https://discord.com/oauth2/authorize?client_id={app.config['DISCORD_CLIENT_ID']}&response_type=code&redirect_uri={quote(redirect_uri)}&scope=identify+email")
 
-@app.route("/callback/") 
+
+@app.route("/callback", methods=["GET"])
+@app.route("/callback/", methods=["GET"])
 def callback():
     """Handle Discord OAuth2 callback."""
     try:
-        discord.callback()
-        user = discord.fetch_user()
-        session["user_id"] = user.id
-        return redirect(url_for("dashboard"))
+        discord.callback()  # Discord callback, przetwarza kod autoryzacji
+        user = discord.fetch_user()  # Pobierz dane użytkownika z Discorda
+        session["user_id"] = user.id  # Zapisz ID użytkownika w sesji
+        return redirect("/dashboard/")  # Po pomyślnym zalogowaniu, przekierowanie na stronę dashboard
     except Exception as e:
+        print(f"Błąd logowania: {e}")  # Dodatkowe logowanie błędów
         return jsonify(error="Błąd logowania: " + str(e)), 400
 
 @app.route("/logout/")
@@ -151,6 +172,7 @@ def dashboard():
         active_subscription = is_subscribed(user.id)
         return render_template("user_dashboard.html", user=user, subscribed=active_subscription)
 
+
 # Nowa trasa, która przekierowuje użytkownika na Patronite
 @app.route("/redirect-to-patronite", methods=["POST"])
 def redirect_to_patronite():
@@ -167,5 +189,5 @@ def favicon():
     return '', 204  # Odpowiada pustą odpowiedzią i kodem 204 (No Content)
 
 if __name__ == "__main__":
-    create_tables()  # Tworzymy tabelę przy starcie aplikacji
-    app.run(port=4242, debug=True)
+    create_tables()  # Tworzy tabele przy starcie aplikacji
+    app.run(host="localhost", port=3000, debug=True)
