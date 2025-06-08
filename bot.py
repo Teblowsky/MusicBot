@@ -80,7 +80,7 @@ class YTDLSource(discord.PCMVolumeTransformer):
             'format': 'bestaudio/best',
             'noplaylist': False,
             'quiet': True,
-            'extract_flat': False,
+            'extract_flat': 'in_playlist',
             'postprocessors': [{
                 'key': 'FFmpegExtractAudio',
                 'preferredcodec': 'mp3',
@@ -95,14 +95,20 @@ class YTDLSource(discord.PCMVolumeTransformer):
             data = await loop.run_in_executor(None, lambda: ytdl.extract_info(url, download=not stream))
 
             if 'entries' in data:
+                playlist_title = data.get('title', 'Playlista')
+                await loop.run_in_executor(None, lambda: print(f"📋 Ładowanie playlisty: {playlist_title}"))
+                
                 for i, entry in enumerate(data['entries']):
                     if i >= MAX_PLAYLIST_ITEMS:
                         break
                     try:
                         if not entry or 'url' not in entry:
                             continue
-                        source = discord.FFmpegPCMAudio(source=entry['url'], **ffmpeg_options)
-                        players.append(cls(source, data=entry, requester_id=requester_id))
+                        entry_data = await loop.run_in_executor(None, lambda: ytdl.extract_info(entry['url'], download=not stream))
+                        if not entry_data:
+                            continue
+                        source = discord.FFmpegPCMAudio(source=entry_data['url'], **ffmpeg_options)
+                        players.append(cls(source, data=entry_data, requester_id=requester_id))
                     except Exception as e:
                         print(f"⚠️ Pominięto niedostępny utwór: {e}")
                         continue
