@@ -1,6 +1,6 @@
 import discord
 from discord.ext import commands
-from pytube import YouTube, Playlist
+import yt_dlp
 import asyncio
 import os
 from datetime import datetime, timedelta
@@ -54,6 +54,7 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 
 ffmpeg_options = {
     'options': '-vn',
+    'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5'
 }
 
 queues = {}
@@ -109,38 +110,50 @@ class YTDLSource(discord.PCMVolumeTransformer):
         loop = loop or asyncio.get_event_loop()
         players = []
 
+        ydl_opts = {
+            'format': 'bestaudio/best',
+            'noplaylist': False,
+            'quiet': True,
+            'no_warnings': True,
+            'extract_flat': 'in_playlist',
+            'postprocessors': [{
+                'key': 'FFmpegExtractAudio',
+                'preferredcodec': 'mp3',
+                'preferredquality': '192' if is_premium(requester_id) else '128',
+            }],
+            'extractor_args': {
+                'youtube': {
+                    'skip': ['dash', 'hls'],
+                    'player_skip': ['js', 'configs', 'webpage'],
+                }
+            },
+            'http_headers': {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                'Accept-Language': 'en-us,en;q=0.5',
+                'Sec-Fetch-Mode': 'navigate',
+            }
+        }
+
         try:
             bot_logger.info(f"Próba pobrania informacji o utworze: {url}")
             
-            if 'playlist' in url:
-                playlist = Playlist(url)
-                for video_url in playlist.video_urls[:MAX_PLAYLIST_ITEMS]:
-                    yt = YouTube(video_url)
-                    stream = yt.streams.filter(only_audio=True).first()
-                    if stream:
-                        data = {
-                            'title': yt.title,
-                            'url': stream.url,
-                            'duration': yt.length,
-                            'webpage_url': video_url
-                        }
-                        players.append(data)
-            else:
-                yt = YouTube(url)
-                stream = yt.streams.filter(only_audio=True).first()
-                if stream:
-                    data = {
-                        'title': yt.title,
-                        'url': stream.url,
-                        'duration': yt.length,
-                        'webpage_url': url
-                    }
-                    players.append(data)
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                data = await loop.run_in_executor(None, lambda: ydl.extract_info(url, download=not stream))
+                
+                if 'entries' in data:
+                    # To jest playlista
+                    for entry in data['entries'][:MAX_PLAYLIST_ITEMS]:
+                        if not entry:
+                            continue
+                        source = discord.FFmpegPCMAudio(entry['url'], **ffmpeg_options)
+                        players.append(cls(source, data=entry, requester_id=requester_id))
+                else:
+                    # To jest pojedynczy utwór
+                    source = discord.FFmpegPCMAudio(data['url'], **ffmpeg_options)
+                    players.append(cls(source, data=data, requester_id=requester_id))
 
-            if not players:
-                raise Exception("Nie znaleziono strumienia audio")
-
-            return [cls(discord.FFmpegPCMAudio(player['url'], **ffmpeg_options), data=player, requester_id=requester_id) for player in players]
+            return players
 
         except Exception as e:
             bot_logger.error(f"❌ Błąd podczas pobierania utworu: {str(e)}")
